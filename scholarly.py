@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 """scholarly.py"""
 
 from __future__ import absolute_import, division, print_function, unicode_literals
@@ -25,69 +22,85 @@ _HEADERS = {
     'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ubuntu Chromium/41.0.2272.76 Chrome/41.0.2272.76 Safari/537.36',
     'accept': 'text/html,application/xhtml+xml,application/xml'
     }
-_SCHOLARHOST = 'https://scholar.google.com'
-_PUBSEARCH = '/scholar?q={0}'
+_HOST = 'https://scholar.google.com'
 _AUTHSEARCH = '/citations?view_op=search_authors&hl=en&mauthors={0}'
-_KEYWORDSEARCH = '/citations?view_op=search_authors&hl=en&mauthors=label:{0}'
 _CITATIONAUTH = '/citations?user={0}&hl=en'
-_CITATIONAUTHRE = r'user=([\w-]*)'
 _CITATIONPUB = '/citations?view_op=view_citation&citation_for_view={0}'
-_CITATIONPUBRE = r'citation_for_view=([\w-]*:[\w-]*)'
+_KEYWORDSEARCH = '/citations?view_op=search_authors&hl=en&mauthors=label:{0}'
+_KEYWORDSEARCH_CHOOSESTART = '/citations?view_op=search_authors&hl=en&mauthors=label:{0}&astart={1}'
+_PUBSEARCH = '/scholar?q={0}'
+_PUBSEARCH_CHOOSESTART = '/scholar?q={0}&start={1}'
 _SCHOLARPUB = '/scholar?oi=bibs&hl=en&cites={0}'
-_SCHOLARPUBRE = r'cites=([\w-]*)'
+
+_CITATIONAUTHRE = r'user=([\w-]*)'
+_CITATIONPUBRE = r'citation_for_view=([\w-]*:[\w-]*)'
 _SCHOLARCITERE = r'gs_ocit\(event,\'([\w-]*)\''
+_SCHOLARPUBRE = r'cites=([\w-]*)'
+_EMAILAUTHORRE = r'Verified email at '
+
 _SESSION = requests.Session()
 _PAGESIZE = 100
+
+
+def _handle_captcha(url):
+    # TODO: PROBLEMS HERE! NEEDS ATTENTION
+    # Get the captcha image
+    captcha_url = _HOST + '/sorry/image?id={0}'.format(g_id)
+    captcha = _SESSION.get(captcha_url, headers=_HEADERS)
+    # Upload to remote host and display to user for human verification
+    img_upload = requests.post('http://postimage.org/',
+        files={'upload[]': ('scholarly_captcha.jpg', captcha.text)})
+    print(img_upload.text)
+    img_url_soup = BeautifulSoup(img_upload.text, 'html.parser')
+    img_url = img_url_soup.find_all(alt='scholarly_captcha')[0].get('src')
+    print('CAPTCHA image URL: {0}'.format(img_url))
+    # Need to check Python version for input
+    if sys.version[0]=="3":
+        g_response = input('Enter CAPTCHA: ')
+    else:
+        g_response = raw_input('Enter CAPTCHA: ')
+    # Once we get a response, follow through and load the new page.
+    url_response = _HOST+'/sorry/CaptchaRedirect?continue={0}&id={1}&captcha={2}&submit=Submit'.format(dest_url, g_id, g_response)
+    resp_captcha = _SESSION.get(url_response, headers=_HEADERS, cookies=_COOKIES)
+    print('Forwarded to {0}'.format(resp_captcha.url))
+    return resp_captcha.url
 
 
 def _get_page(pagerequest):
     """Return the data for a page on scholar.google.com"""
     # Note that we include a sleep to avoid overloading the scholar server
     time.sleep(5+random.uniform(0, 5))
-    resp_url = _SESSION.get(_SCHOLARHOST+pagerequest, headers=_HEADERS, cookies=_COOKIES)
-    if resp_url.status_code == 200:
-        return resp_url.text
-    if resp_url.status_code == 503:
+    resp = _SESSION.get(pagerequest, headers=_HEADERS, cookies=_COOKIES)
+    if resp.status_code == 200:
+        return resp.text
+    if resp.status_code == 503:
         # Inelegant way of dealing with the G captcha
-        dest_url = requests.utils.quote(_SCHOLARHOST+pagerequest)
-        g_id_soup = BeautifulSoup(resp_url.text, 'html.parser')
-        g_id = g_id_soup.findAll('input')[1].get('value')
-        # Get the captcha image
-        captcha_url = _SCHOLARHOST+'/sorry/image?id={0}'.format(g_id)
-        captcha = _SESSION.get(captcha_url, headers=_HEADERS)
-        # Upload to remote host and display to user for human verification
-        img_upload = requests.post('http://postimage.org/',
-            files={'upload[]': ('scholarly_captcha.jpg', captcha.text)})
-        img_url_soup = BeautifulSoup(img_upload.text, 'html.parser')
-        img_url = img_url_soup.findAll(alt='scholarly_captcha')[0].get('src')
-        print('CAPTCHA image URL: {0}'.format(img_url))
-        # Need to check Python version for input
-        if sys.version[0]=="3":
-            g_response = input('Enter CAPTCHA: ')
-        else:
-            g_response = raw_input('Enter CAPTCHA: ')
-        # Once we get a response, follow through and load the new page.
-        url_response = _SCHOLARHOST+'/sorry/CaptchaRedirect?continue={0}&id={1}&captcha={2}&submit=Submit'.format(dest_url, g_id, g_response)
-        resp_captcha = _SESSION.get(url_response, headers=_HEADERS)
-        print('Forwarded to {0}'.format(resp_captcha.url))
-        return _get_page(re.findall(r'https:\/\/(?:.*?)(\/.*)', resp_captcha.url)[0])
+        raise Exception('Error: {0} {1}'.format(resp.status_code, resp.reason))
+        # TODO: Need to fix captcha handling
+        # dest_url = requests.utils.quote(_SCHOLARHOST+pagerequest)
+        # soup = BeautifulSoup(resp.text, 'html.parser')
+        # captcha_url = soup.find('img').get('src')
+        # resp = _handle_captcha(captcha_url)
+        # return _get_page(re.findall(r'https:\/\/(?:.*?)(\/.*)', resp)[0])
     else:
-        raise Exception('Error: {0} {1}'.format(resp_url.status_code, resp_url.reason))
+        raise Exception('Error: {0} {1}'.format(resp.status_code, resp.reason))
 
 
 def _get_soup(pagerequest):
     """Return the BeautifulSoup for a page on scholar.google.com"""
     html = _get_page(pagerequest)
+    html = html.replace(u'\xa0', u' ')
     return BeautifulSoup(html, 'html.parser')
 
 
 def _search_scholar_soup(soup):
     """Generator that returns Publication objects from the search page"""
     while True:
-        for row in soup.findAll('div', 'gs_r'):
+        for row in soup.find_all('div', 'gs_or'):
             yield Publication(row, 'scholar')
         if soup.find(class_='gs_ico gs_ico_nav_next'):
-            soup = _get_soup(soup.find(class_='gs_ico gs_ico_nav_next').parent['href'])
+            url = soup.find(class_='gs_ico gs_ico_nav_next').parent['href']
+            soup = _get_soup(_HOST+url)
         else:
             break
 
@@ -95,13 +108,13 @@ def _search_scholar_soup(soup):
 def _search_citation_soup(soup):
     """Generator that returns Author objects from the author search page"""
     while True:
-        for row in soup.findAll('div', 'gsc_1usr'):
+        for row in soup.find_all('div', 'gsc_1usr'):
             yield Author(row)
-        nextbutton = soup.find(class_='gs_btnPR gs_in_ib gs_btn_half gs_btn_srt')
-        if nextbutton and 'disabled' not in nextbutton.attrs:
-            next_url = nextbutton['onclick'][17:-1]
-            next_url = codecs.getdecoder("unicode_escape")(next_url)[0]
-            soup = _get_soup(next_url)
+        next_button = soup.find(class_='gs_btnPR gs_in_ib gs_btn_half gs_btn_lsb gs_btn_srt gsc_pgn_pnx')
+        if next_button and 'disabled' not in next_button.attrs:
+            url = next_button['onclick'][17:-1]
+            url = codecs.getdecoder("unicode_escape")(url)[0]
+            soup = _get_soup(_HOST+url)
         else:
             break
 
@@ -113,9 +126,9 @@ class Publication(object):
         self.source = pubtype
         if self.source == 'citations':
             self.bib['title'] = __data.find('a', class_='gsc_a_at').text
-            self.id_citations = re.findall(_CITATIONPUBRE, __data.find('a', class_='gsc_a_at')['href'])[0]
+            self.id_citations = re.findall(_CITATIONPUBRE, __data.find('a', class_='gsc_a_at')['data-href'])[0]
             citedby = __data.find(class_='gsc_a_ac')
-            if citedby and not citedby.text.isspace():
+            if citedby and not (citedby.text.isspace() or citedby.text == ''):
                 self.citedby = int(citedby.text)
             year = __data.find(class_='gsc_a_h')
             if year and year.text and not year.text.isspace() and len(year.text)>0:
@@ -144,20 +157,20 @@ class Publication(object):
                     self.citedby = int(re.findall(r'\d+', link.text)[0])
                     self.id_scholarcitedby = re.findall(_SCHOLARPUBRE, link['href'])[0]
             if __data.find('div', class_='gs_ggs gs_fl'):
-                self.bib['eprint'] = __data.find('div', class_='gs_ggs gs_fl').find('a')['href']
+                self.bib['eprint'] = __data.find('div', class_='gs_ggs gs_fl').a['href']
         self._filled = False
 
     def fill(self):
         """Populate the Publication with information from its profile"""
         if self.source == 'citations':
-            url_citations = _CITATIONPUB.format(self.id_citations)
-            soup = _get_soup(url_citations)
-            self.bib['title'] = soup.find('div', id='gsc_title').text
-            if soup.find('a', class_='gsc_title_link'):
-                self.bib['url'] = soup.find('a', class_='gsc_title_link')['href']
-            for item in soup.findAll('div', class_='gs_scl'):
-                key = item.find(class_='gsc_field').text
-                val = item.find(class_='gsc_value')
+            url = _CITATIONPUB.format(self.id_citations)
+            soup = _get_soup(_HOST+url)
+            self.bib['title'] = soup.find('div', id='gsc_vcd_title').text
+            if soup.find('a', class_='gsc_vcd_title_link'):
+                self.bib['url'] = soup.find('a', class_='gsc_vcd_title_link')['href']
+            for item in soup.find_all('div', class_='gs_scl'):
+                key = item.find(class_='gsc_vcd_field').text
+                val = item.find(class_='gsc_vcd_value')
                 if key == 'Authors':
                     self.bib['author'] = ' and '.join([i.strip() for i in val.text.split(',')])
                 elif key == 'Journal':
@@ -177,9 +190,9 @@ class Publication(object):
                         val = val.text[9:].strip()
                     self.bib['abstract'] = val
                 elif key == 'Total citations':
-                    self.id_scholarcitedby = re.findall(_SCHOLARPUBRE, val.find('a')['href'])[0]
-            if soup.find('div', class_='gsc_title_ggi'):
-                self.bib['eprint'] = soup.find('div', class_='gsc_title_ggi').a['href']
+                    self.id_scholarcitedby = re.findall(_SCHOLARPUBRE, val.a['href'])[0]
+            if soup.find('div', class_='gsc_vcd_title_ggi'):
+                self.bib['eprint'] = soup.find('div', class_='gsc_vcd_title_ggi').a['href']
             self._filled = True
         elif self.source == 'scholar':
             bibtex = _get_page(self.url_scholarbib)
@@ -194,7 +207,8 @@ class Publication(object):
         if not hasattr(self, 'id_scholarcitedby'):
             self.fill()
         if hasattr(self, 'id_scholarcitedby'):
-            soup = _get_soup(_SCHOLARPUB.format(requests.utils.quote(self.id_scholarcitedby)))
+            url = _SCHOLARPUB.format(requests.utils.quote(self.id_scholarcitedby))
+            soup = _get_soup(_HOST+url)
             return _search_scholar_soup(soup)
         else:
             return []
@@ -211,44 +225,56 @@ class Author(object):
         else:
             self.id = re.findall(_CITATIONAUTHRE, __data('a')[0]['href'])[0]
             self.url_picture = __data('img')[0]['src']
-            self.name = __data.find('h3', class_='gsc_1usr_name').text
-            affiliation = __data.find('div', class_='gsc_1usr_aff')
+            self.name = __data.find('h3', class_='gs_ai_name').text
+            affiliation = __data.find('div', class_='gs_ai_aff')
             if affiliation:
                 self.affiliation = affiliation.text
-            email = __data.find('div', class_='gsc_1usr_emlb')
+            email = __data.find('div', class_='gs_ai_eml')
             if email:
-                self.email = email.text
-            self.interests = [i.text.strip() for i in __data.findAll('a', class_='gsc_co_int')]
-            citedby = __data.find('div', class_='gsc_1usr_cby')
-            if citedby:
+                self.email = re.sub(_EMAILAUTHORRE, r'@', email.text)
+            self.interests = [i.text.strip() for i in
+                              __data.find_all('a', class_='gs_ai_one_int')]
+            citedby = __data.find('div', class_='gs_ai_cby')
+            if citedby and citedby.text != '':
                 self.citedby = int(citedby.text[9:])
         self._filled = False
 
     def fill(self):
         """Populate the Author with information from their profile"""
         url_citations = _CITATIONAUTH.format(self.id)
-        soup = _get_soup('{0}&pagesize={1}'.format(url_citations, _PAGESIZE))
+        url = '{0}&pagesize={1}'.format(url_citations, _PAGESIZE)
+        soup = _get_soup(_HOST+url)
         self.name = soup.find('div', id='gsc_prf_in').text
         self.affiliation = soup.find('div', class_='gsc_prf_il').text
-        self.interests = [i.text.strip() for i in soup.findAll('a', class_='gsc_prf_ila')]
-        self.url_picture = soup.find('img')['src']
-
-	#h-index, i10-index and h-index, i10-index in the last 5 years
-        index = soup.findAll('td', class_='gsc_rsb_std')
-        self.hindex = int(index[2].text)
-        self.hindex5y = int(index[3].text)
-        self.i10index = int(index[4].text)
-        self.i10index5y = int(index[5].text)
+        self.interests = [i.text.strip() for i in soup.find_all('a', class_='gsc_prf_inta')]
         
+        # h-index, i10-index and h-index, i10-index in the last 5 years
+        index = soup.find_all('td', class_='gsc_rsb_std')
+        if index:
+            self.citedby = int(index[0].text)
+            self.citedby5y = int(index[1].text)
+            self.hindex = int(index[2].text)
+            self.hindex5y = int(index[3].text)
+            self.i10index = int(index[4].text)
+            self.i10index5y = int(index[5].text)
+        else:
+            self.hindex = self.hindex5y = self.i10index = self.i10index5y = 0
+
+        # number of citations per year
+        years = [int(y.text) for y in soup.find_all('span', class_='gsc_g_t')]
+        cites = [int(c.text) for c in soup.find_all('span', class_='gsc_g_al')]
+        self.cites_per_year = dict(zip(years, cites))
+
         self.publications = list()
         pubstart = 0
         while True:
-            for row in soup.findAll('tr', class_='gsc_a_tr'):
+            for row in soup.find_all('tr', class_='gsc_a_tr'):
                 new_pub = Publication(row, 'citations')
                 self.publications.append(new_pub)
-            if 'disabled' not in soup.find('button', id='gsc_bpf_next').attrs:
+            if 'disabled' not in soup.find('button', id='gsc_bpf_more').attrs:
                 pubstart += _PAGESIZE
-                soup = _get_soup('{0}&cstart={1}&pagesize={2}'.format(url_citations, pubstart, _PAGESIZE))
+                url = '{0}&cstart={1}&pagesize={2}'.format(url_citations, pubstart, _PAGESIZE)
+                soup = _get_soup(_HOST+url)
             else:
                 break
         self._filled = True
@@ -260,36 +286,39 @@ class Author(object):
 
 def search_pubs_query(query):
     """Search by scholar query and return a generator of Publication objects"""
-    soup = _get_soup(_PUBSEARCH.format(requests.utils.quote(query)))
+    url = _PUBSEARCH.format(requests.utils.quote(query))
+    soup = _get_soup(_HOST+url)
     return _search_scholar_soup(soup)
 
+def search_pubs_query_random(query):
+    """Search by scholar query, but starting on a random page and return a generator of Publication objects"""
+    url = _PUBSEARCH_CHOOSESTART.format(requests.utils.quote(query), random.randint(0, 40))
+    soup = _get_soup(_HOST+url)
+    return _search_scholar_soup(soup)
 
 def search_author(name):
     """Search by author name and return a generator of Author objects"""
-    soup = _get_soup(_AUTHSEARCH.format(requests.utils.quote(name)))
+    url = _AUTHSEARCH.format(requests.utils.quote(name))
+    soup = _get_soup(_HOST+url)
     return _search_citation_soup(soup)
 
 
 def search_keyword(keyword):
     """Search by keyword and return a generator of Author objects"""
-    soup = _get_soup(_KEYWORDSEARCH.format(requests.utils.quote(keyword)))
+    url = _KEYWORDSEARCH.format(requests.utils.quote(keyword))
+    soup = _get_soup(_HOST+url)
     return _search_citation_soup(soup)
-
 
 def search_pubs_custom_url(url):
     """Search by custom URL and return a generator of Publication objects
     URL should be of the form '/scholar?q=...'"""
-    soup = _get_soup(url)
+    soup = _get_soup(_HOST+url)
     return _search_scholar_soup(soup)
 
 
 def search_author_custom_url(url):
     """Search by custom URL and return a generator of Publication objects
     URL should be of the form '/citation?q=...'"""
-    soup = _get_soup(url)
+    soup = _get_soup(_HOST+url)
     return _search_citation_soup(soup)
 
-
-if __name__ == "__main__":
-    author = next(search_author('Steven A. Cholewiak')).fill()
-    print(author)
